@@ -436,6 +436,54 @@ def predict_model_allergens(text: str) -> pd.DataFrame:
         max_length=128
     )
 
+    # =========================
+    # 关键修复：
+    # 只保留当前模型 forward() 支持的输入字段
+    # 例如 DistilBERT 通常不接受 token_type_ids
+    # =========================
+    import inspect
+
+    valid_forward_args = inspect.signature(model.forward).parameters
+
+    inputs = {
+        key: value.to(device)
+        for key, value in inputs.items()
+        if key in valid_forward_args
+    }
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs.logits.detach().cpu().numpy()[0]
+
+    probabilities = sigmoid(logits)
+
+    rows = []
+
+    for label, prob in zip(labels, probabilities):
+        threshold = thresholds.get(label, 0.5)
+        predicted = int(prob >= threshold)
+
+        rows.append({
+            "label": label,
+            "label_zh": ALLERGEN_ZH.get(label, label),
+            "probability": float(prob),
+            "threshold": float(threshold),
+            "model_predicted": predicted
+        })
+
+    return pd.DataFrame(rows).sort_values(by="probability", ascending=False)
+    tokenizer, model, labels, thresholds, device = load_allergen_model()
+
+    text = normalize_text(text)
+
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding="max_length",
+        max_length=128
+    )
+
     inputs = {key: value.to(device) for key, value in inputs.items()}
 
     with torch.no_grad():
